@@ -1,25 +1,5 @@
-
-#	$Outlook = New-Object -ComObject Outlook.Application
 while ($true){
 	clear-host
-#foreach-object {"Når: $($_.Start) `nHva: $($_.subject) `nHvor: $($_.location) `nHvem: $($_.Organi" zer)`n
-
-#Write-host "📔 Notater >>" -ForegroundColor "Yellow"
-#Write-Host "---------------------------------------------------------------------------" -foregroundColor $dot
-#Get-Content "C:\Users\PålBredrup\OneDrive - Stiftelsen Litteraturhuset\Dokumenter\Info\Notes.txt" -Encoding UTF8 | % {Write-host $_ -ForegroundColor "White"}
-#Write-Host "---------------------------------------------------------------------------" -foregroundColor $dot
-#Write-Host "🌡️ $($temp)  💦 $($humid)%  🌬️ $($vind) $($retning) ☀️ $($solopptime):$($soloppminutt) 🌑 $($solnedtime):$($solnedminutt) 🌅 $($($solnedtime)-$($solopptime)):$($($solnedminutt)-$($soloppminutt))" -foregroundColor "White"
-#Write-Host "---------------------------------------------------------------------------" -foregroundColor $dot
-#Write-host "Litteraturhuset.no" -ForegroundColor "Yellow"
-#Write-Host "---------------------------------------------------------------------------" -foregroundColor $dot
-# Autentisering
-
-
-
-
-
-
-
 # DAGLIG OVERSIKT MED RIGGETIDER
 # Viser arrangementer sortert etter riggetid, med tekniker, arrangør og arr.tid
 
@@ -449,8 +429,6 @@ if ($verter) {
 Write-Host " ----------------------------------------------------------------" -ForegroundColor DarkGray
 Write-Host "$(Write-host " Riggetid," -ForegroundColor White -nonewline) $(write-host " " -foregroundColor DarkGray -nonewline) $(Write-host "Get-In" -ForegroundColor Yellow -nonewline) $(write-host ", " -foregroundColor DarkGray -nonewline) $(Write-Host "Arrangement er i gang" -foregroundColor Cyan -nonewline) $(Write-host " " -foregroundColor DarkGray -nonewline)" -ForegroundColor DarkGray
 
-
-
-
 Start-Sleep -seconds 100 
 }
+
