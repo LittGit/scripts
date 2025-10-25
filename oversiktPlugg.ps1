@@ -1,11 +1,9 @@
 # DAGLIG OVERSIKT MED RIGGETIDER
 # Viser arrangementer sortert etter riggetid, med tekniker, arrangør og arr.tid
+# Hvert event kan ha flere rigg-funksjoner som vises på egne linjer
 
 $clientID = "45i054svbmkrvb8hijo5st2koh"
 $clientSecret = "722e0kdr3govijh6trqjdjemk91us89il3368amhhmqc42sod24"
-
-# === ENDRING 2: Smooth refresh ===
-#$Host.UI.RawUI.CursorPosition = @{X=0;Y=0}
 
 $tokenResponse = Invoke-RestMethod -Uri 'https://auth-api.eu-venueops.com/token' -Method Post -Body (@{
     clientSecret = $clientSecret
@@ -87,32 +85,39 @@ foreach ($arr in $arrangementer) {
     }
 }
 
-# Legg til riggetider til arrangementer og sorter basert på det
+# NYE LOGIKK: Én linje per arrangement-funksjon, med kombinert rigg-info for samme rom
 $arrangementerMedRigg = @()
 foreach ($arr in $arrangementer) {
-    # Finn rigg-funksjon som matcher eventName
+    # Finn ALLE rigg-funksjoner som matcher eventName OG roomId (samme rom som arrangementet)
+    $riggFunksjoner = $rigg | Where-Object { $_.eventName -eq $arr.eventName -and $_.roomId -eq $arr.roomId }
+    
     $riggInfo = $null
-    foreach ($r in $rigg) {
-        if ($r.eventName -eq $arr.eventName) {
-            $riggInfo = @{
-                StartTime = $r.startTime
-                EndTime = $r.endTime
-            }
-            break
+    $riggCount = 0
+    
+    if ($riggFunksjoner -and $riggFunksjoner.Count -gt 0) {
+        # Bruk tidligste start og siste slutt hvis det er flere rigg-funksjoner
+        $earliestStart = ($riggFunksjoner | Sort-Object startTime | Select-Object -First 1).startTime
+        $latestEnd = ($riggFunksjoner | Sort-Object endTime -Descending | Select-Object -First 1).endTime
+        $riggCount = $riggFunksjoner.Count
+        
+        $riggInfo = @{
+            StartTime = $earliestStart
+            EndTime = $latestEnd
+            Count = $riggCount
         }
     }
     
-    # Legg til arrangement med sorteringstider
+    # Lag én linje per arrangement-funksjon
     $arrangementerMedRigg += [PSCustomObject]@{
         Arrangement = $arr
         RiggInfo = $riggInfo
-        SortTimeEnd = if ($riggInfo) { $riggInfo.EndTime } else { $arr.endTime }
         SortTimeStart = if ($riggInfo) { $riggInfo.StartTime } else { $arr.startTime }
+        ArrStartTime = $arr.startTime
     }
 }
 
-# Sorter først på rigg SLUTTTID, deretter på rigg STARTTID
-$arrangementerSortert = $arrangementerMedRigg | Sort-Object SortTimeEnd, SortTimeStart
+# Sorter først på rigg STARTTID, deretter på arrangement STARTTID
+$arrangementerSortert = $arrangementerMedRigg | Sort-Object SortTimeStart, ArrStartTime
 
 # Funksjon for å forkorte romnavn
 function Short-Room {
@@ -199,18 +204,17 @@ function Get-TechnicianNames {
         }
     }
     
-    # Returner kombinert streng
+    # Returner teknikernavn eller standardverdier
     if ($teknikere.Count -eq 0) {
         return "-"
     } elseif ($teknikere.Count -eq 1) {
         return $teknikere[0]
     } else {
-        # Hvis to teknikere, vis begge med /
-        return "$($teknikere[0])/$($teknikere[1])"
+        return $teknikere -join ","
     }
 }
 
-# Funksjon for å sjekke om arrangement pågår nå
+# Funksjon for å sjekke om et event pågår nå
 function Is-EventActive {
     param($startTime, $endTime)
     
@@ -221,7 +225,7 @@ function Is-EventActive {
     return ($now -ge $eventStart -and $now -le $eventEnd)
 }
 
-# === ENDRING 1: Funksjon for å sjekke om vi er mellom rigg og arrangement ===
+# Funksjon for å sjekke om vi er mellom rigg og arrangement
 function Is-BetweenRiggAndEvent {
     param($riggEndTime, $eventStartTime)
     
@@ -250,28 +254,30 @@ foreach ($arr in $arrangementer) {
     }
 }
 
-# Vis header
-#Write-Host ""
-#Write-Host " ==============================================================" -ForegroundColor Yellow
-#Write-Host "  DAGSOVERSIKT - $ukedag $todayNorsk" -ForegroundColor Yellow
-#Write-Host " ==============================================================" -ForegroundColor Yellow
-#Write-Host ""
-
 # Vis arrangementer med riggetider
 if ($arrangementerSortert.Count -gt 0) {
-    # Header - oppdatert med arrangør og arr slutt
+    # Header
     Write-Host " Rigg        Rom   Teknikere   Arrangør           Arr.tid" -ForegroundColor Cyan
     Write-Host " ----------- ----- ----------- ------------------ -----------" -ForegroundColor DarkGray
     
     foreach ($item in $arrangementerSortert) {
         $arr = $item.Arrangement
+        $riggInfo = $item.RiggInfo
         
         # Bruk riggetid for visning hvis den finnes
-        if ($item.RiggInfo) {
-            $tid = "$($item.RiggInfo.StartTime)-$($item.RiggInfo.EndTime)"
+        if ($riggInfo) {
+            $tid = "$($riggInfo.StartTime)-$($riggInfo.EndTime)"
         } else {
             # Fallback til arrangement-tid hvis rigg ikke finnes
             $tid = "$($arr.startTime)-$($arr.endTime)"
+        }
+        
+        # Alltid bruk arrangementets rom
+        $rom = Short-Room $arr.roomName
+        
+        # Legg til ikon hvis det er flere rigg-funksjoner
+        if ($riggInfo -and $riggInfo.Count -gt 1) {
+            $rom = $rom + "⚙" * $riggInfo.Count
         }
         
         # Sjekk om ARRANGEMENTET pågår
@@ -279,19 +285,17 @@ if ($arrangementerSortert.Count -gt 0) {
         
         # Sjekk om RIGGING pågår for dette arrangementet
         $isRiggingActive = $false
-        if ($item.RiggInfo) {
-            $isRiggingActive = Is-EventActive -startTime $item.RiggInfo.StartTime -endTime $item.RiggInfo.EndTime
+        if ($riggInfo) {
+            $isRiggingActive = Is-EventActive -startTime $riggInfo.StartTime -endTime $riggInfo.EndTime
         }
         
-        # === ENDRING 1: Sjekk om vi er mellom rigg og arrangement ===
+        # Sjekk om vi er mellom rigg og arrangement
         $isBetweenRiggAndEvent = $false
-        if ($item.RiggInfo) {
-            $isBetweenRiggAndEvent = Is-BetweenRiggAndEvent -riggEndTime $item.RiggInfo.EndTime -eventStartTime $arr.startTime
+        if ($riggInfo) {
+            $isBetweenRiggAndEvent = Is-BetweenRiggAndEvent -riggEndTime $riggInfo.EndTime -eventStartTime $arr.startTime
         }
         
-        $rom = Short-Room $arr.roomName
-        
-        # Hent teknikere basert på eventName OG roomId
+        # Hent teknikere basert på eventName OG roomId (arrangementets rom)
         $tek = Get-TechnicianNames -eventName $arr.eventName -roomId $arr.roomId
         if ($tek -eq "-") {
             $tek = "     -       "
@@ -326,7 +330,7 @@ if ($arrangementerSortert.Count -gt 0) {
             # Arrangementet pågår akkurat nå - cyan
             $farge = "Cyan"
         } elseif ($isBetweenRiggAndEvent) {
-            # === ENDRING 1: Mellom rigg og arrangement - GUL ===
+            # Mellom rigg og arrangement - GUL
             $farge = "Yellow"
         } elseif ($isRiggingActive) {
             # Rigging pågår for dette arrangementet - hvit
@@ -349,7 +353,9 @@ if ($arrangementerSortert.Count -gt 0) {
         $arrTider = Truncate $arrTider 11
 
         # Strammere linje
-        $linje = " {0,-11} {1,-6} {2,-10} {3,-18} {4,-11}" -f $tid, $rom, $tek, $arrangor, $arrTider
+        $arrangorPadded = $arrangor.PadRight(18)
+        $arrangorMedLenke = "`e]8;;https://meetings.eu-venueops.com/events/$($arr.eventId)/detailing/functions`e\$arrangorPadded`e]8;;`e\"
+        $linje = " {0,-11} {1,-6} {2,-10} {3} {4,-11}" -f $tid, $rom, $tek, $arrangorMedLenke, $arrTider
         
         # Hvis ARRANGEMENTET pågår, legg til en indikator
         if ($isEventActive) {
@@ -376,7 +382,7 @@ if ($verter) {
             # Split på mellomrom og ta første ord
             $navneDeler = $cleanName -split '\s+'
             if ($navneDeler.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($navneDeler[0])) {
-                $fornavn = $navneDeler[0]
+                $fornavn = "$($navneDeler[0]) $($navneDeler[1]) $($navneDeler[2]) $($navneDeler[3])"
             }
         }
         
@@ -392,7 +398,7 @@ if ($verter) {
         
         $linje = " {0,-11} {1}" -f $tid, $fornavn
         
-        # === ENDRING 3: Morgenansatte er darkGray, lyser cyan når aktiv ===
+        # Morgenansatte er darkGray, lyser cyan når aktiv
         if ($fornavn -eq "Pål" -or $fornavn -eq "Mads" -or $fornavn -eq "Johan") {
             # Morgenansatte - darkGray når inaktiv, cyan når aktiv
             if ($isVertActive) {
@@ -412,7 +418,3 @@ if ($verter) {
 } else {
     Write-Host " -ingen-" -ForegroundColor Red
 }
-
-#Write-Host ""
-#Write-Host " ----------------------------------------------------------------" -ForegroundColor DarkGray
-#Write-Host ""
