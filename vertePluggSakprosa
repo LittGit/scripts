@@ -1,0 +1,383 @@
+# DAGLIG OVERSIKT MED RIGGETIDER
+# Viser arrangementer sortert etter riggetid, med tekniker, arrangør og arr.tid
+
+$clientID = "45i054svbmkrvb8hijo5st2koh"
+$clientSecret = "722e0kdr3govijh6trqjdjemk91us89il3368amhhmqc42sod24"
+
+$tokenResponse = Invoke-RestMethod -Uri 'https://auth-api.eu-venueops.com/token' -Method Post -Body (@{
+    clientSecret = $clientSecret
+    clientId = $clientID
+} | ConvertTo-Json) -ContentType "application/json"
+
+$headers = @{
+    Authorization = "Bearer $($tokenResponse.accessToken)"
+}
+
+# Dagens dato og tid
+$today = (Get-Date).ToString("yyyy-MM-dd")
+$todayNorsk = (Get-Date).ToString("dd.MM.yyyy")
+$ukedag = (Get-Date).ToString("dddd", [System.Globalization.CultureInfo]::GetCultureInfo("nb-NO"))
+$currentTime = Get-Date
+
+# Hent funksjoner
+$functions = Invoke-RestMethod -Uri "https://api.eu-venueops.com/v1/functions?startDate=$today&endDate=$today" -Method Get -Headers $headers
+
+# Filtrer og forbered data - ALLE 5 FUNKSJONSTYPER
+$arrangementer = $functions | Where-Object {$_.functionTypeName -eq 'Arrangement' -and $_.functionStatus -ne "canceled"}
+$rigg = $functions | Where-Object {$_.functionTypeName -eq 'Rigg' -and $_.functionStatus -ne "canceled"}
+$getIn = $functions | Where-Object {$_.functionTypeName -eq 'Get-in' -and $_.functionStatus -ne "canceled"}
+$getOut = $functions | Where-Object {$_.functionTypeName -eq 'Get-out' -and $_.functionStatus -ne "canceled"}
+$verter = $functions | Where-Object {$_.functionTypeName -eq 'Vert'} | Sort-Object startTime
+
+# Hent ALLE tekniker-funksjoner (kun for navn)
+$alleTeknikere = $functions | Where-Object {$_.functionTypeName -eq 'Tekniker' -and $_.functionStatus -ne "canceled"}
+
+# Prøv å finne tekniker-info fra functions
+$teknikere1 = @()
+$teknikere2 = @()
+
+foreach ($tek in $alleTeknikere) {
+    if ($tek.staffAssignments -and $tek.staffAssignments.Count -gt 0) {
+        foreach ($staff in $tek.staffAssignments) {
+            if ($staff.staffAssignmentName -like "*FTekniker*1*" -or 
+                $staff.staffAssignmentId -eq "e4d0b7e4a9e043f496f44544dc46e33a") {
+                
+                $tek1 = $tek | Select-Object -Property *
+                $tek1 | Add-Member -NotePropertyName "assignedStaffName" -NotePropertyValue $staff.staffMemberName -Force
+                $tek1 | Add-Member -NotePropertyName "assignedStaffId" -NotePropertyValue $staff.staffMemberId -Force
+                $tek1 | Add-Member -NotePropertyName "assignmentType" -NotePropertyValue "FTekniker1" -Force
+                $teknikere1 += $tek1
+            }
+            elseif ($staff.staffAssignmentName -like "*FTekniker*2*" -or 
+                    $staff.staffAssignmentId -eq "db0b05695ae84f9fa2d599c9892ad036") {
+                
+                $tek2 = $tek | Select-Object -Property *
+                $tek2 | Add-Member -NotePropertyName "assignedStaffName" -NotePropertyValue $staff.staffMemberName -Force
+                $tek2 | Add-Member -NotePropertyName "assignedStaffId" -NotePropertyValue $staff.staffMemberId -Force
+                $tek2 | Add-Member -NotePropertyName "assignmentType" -NotePropertyValue "FTekniker2" -Force
+                $teknikere2 += $tek2
+            }
+        }
+    }
+    elseif ($tek.name -match "Tekniker\s+(.+)") {
+        $tek | Add-Member -NotePropertyName "assignedStaffName" -NotePropertyValue $Matches[1].Trim() -Force
+        $tek | Add-Member -NotePropertyName "assignmentType" -NotePropertyValue "FTekniker1" -Force
+        $teknikere1 += $tek
+    }
+}
+
+# Hent event-detaljer for å få accountName
+$eventCache = @{}
+foreach ($arr in $arrangementer) {
+    if ($arr.eventId -and -not $eventCache.ContainsKey($arr.eventId)) {
+        try {
+            $eventDetails = Invoke-RestMethod -Uri "https://api.eu-venueops.com/v1/events/$($arr.eventId)" -Method Get -Headers $headers
+            $eventCache[$arr.eventId] = $eventDetails
+        } catch {
+            $eventCache[$arr.eventId] = $null
+        }
+    }
+}
+
+# Legg til alle funksjoner til arrangementer
+$arrangementerMedRigg = @()
+foreach ($arr in $arrangementer) {
+    $riggFunksjoner = $rigg | Where-Object { $_.eventName -eq $arr.eventName -and $_.roomId -eq $arr.roomId }
+    $getInFunksjoner = $getIn | Where-Object { $_.eventName -eq $arr.eventName -and $_.roomId -eq $arr.roomId }
+    $getOutFunksjoner = $getOut | Where-Object { $_.eventName -eq $arr.eventName -and $_.roomId -eq $arr.roomId }
+    
+    $riggInfo = $null
+    $getInInfo = $null
+    $getOutInfo = $null
+    $riggCount = 0
+    
+    if ($riggFunksjoner -and $riggFunksjoner.Count -gt 0) {
+        $earliestStart = ($riggFunksjoner | Sort-Object startTime | Select-Object -First 1).startTime
+        $latestEnd = ($riggFunksjoner | Sort-Object endTime -Descending | Select-Object -First 1).endTime
+        $riggCount = $riggFunksjoner.Count
+        
+        $riggInfo = @{
+            StartTime = $earliestStart
+            EndTime = $latestEnd
+            Count = $riggCount
+        }
+    }
+    
+    if ($getInFunksjoner -and $getInFunksjoner.Count -gt 0) {
+        $getInInfo = @{
+            StartTime = ($getInFunksjoner | Sort-Object startTime | Select-Object -First 1).startTime
+            EndTime = ($getInFunksjoner | Sort-Object endTime -Descending | Select-Object -First 1).endTime
+        }
+    }
+    
+    if ($getOutFunksjoner -and $getOutFunksjoner.Count -gt 0) {
+        $getOutInfo = @{
+            StartTime = ($getOutFunksjoner | Sort-Object startTime | Select-Object -First 1).startTime
+            EndTime = ($getOutFunksjoner | Sort-Object endTime -Descending | Select-Object -First 1).endTime
+        }
+    }
+    
+    $arrangementerMedRigg += [PSCustomObject]@{
+        Arrangement = $arr
+        RiggInfo = $riggInfo
+        GetInInfo = $getInInfo
+        GetOutInfo = $getOutInfo
+        SortTimeStart = if ($riggInfo) { $riggInfo.StartTime } else { $arr.startTime }
+        ArrStartTime = $arr.startTime
+    }
+}
+
+$arrangementerSortert = $arrangementerMedRigg | Sort-Object SortTimeStart, ArrStartTime
+
+function Short-Room {
+    param([string]$room)
+    $room = $room -replace "^room-", ""
+    $room = $room -replace "\s*\([^)]*\)", ""
+    
+    switch ($room.ToLower()) {
+        "wergeland" { return "Werge" }
+        "skram" { return "Skram" }
+        "berner" { return "Berne" }
+        "nedjma" { return "Nedjm" }
+        "kverneland" { return "Kvern" }
+        "riverton" { return "River" }
+        "vestly" { return "Vestl" }
+        default { 
+            if ($room.Length -gt 10) {
+                return $room.Substring(0, 10)
+            } else {
+                return $room.PadRight(10)
+            }
+        }
+    }
+}
+
+function Get-TechnicianNames {
+    param($eventName, $roomId)
+    
+    $teknikere = @()
+    
+    foreach ($t in $teknikere1) {
+        if ($t.eventName -eq $eventName -and $t.roomId -eq $roomId) {
+            $navn = $null
+            
+            if ($t.assignedStaffName) {
+                $navn = $t.assignedStaffName
+            } elseif ($t.name -match "Tekniker\s+(.+)") {
+                $navn = $Matches[1].Trim()
+            }
+            
+            if ($navn) {
+                if ($navn -match " ") {
+                    $navn = ($navn -split ' ')[0]
+                }
+                if ($navn.Length -gt 6) {
+                    $navn = $navn.Substring(0, 6)
+                }
+                if ($navn -ne "Trenger" -and $navn -ne "Trengs") {
+                    $teknikere += $navn
+                }
+            }
+        }
+    }
+    
+    foreach ($t in $teknikere2) {
+        if ($t.eventName -eq $eventName -and $t.roomId -eq $roomId) {
+            $navn = $null
+            
+            if ($t.assignedStaffName) {
+                $navn = $t.assignedStaffName
+            } elseif ($t.name -match "Tekniker\s+(.+)") {
+                $navn = $Matches[1].Trim()
+            }
+            
+            if ($navn) {
+                if ($navn -match " ") {
+                    $navn = ($navn -split ' ')[0]
+                }
+                if ($navn.Length -gt 6) {
+                    $navn = $navn.Substring(0, 6)
+                }
+                if ($navn -ne "Trenger" -and $navn -ne "Trengs") {
+                    $teknikere += $navn
+                }
+            }
+        }
+    }
+    
+    if ($teknikere.Count -eq 0) {
+        return "-"
+    } elseif ($teknikere.Count -eq 1) {
+        return $teknikere[0]
+    } else {
+        return $teknikere -join ","
+    }
+}
+
+function Is-EventActive {
+    param($startTime, $endTime)
+    
+    $now = Get-Date
+    $eventStart = Get-Date -Hour ([int]($startTime.Split(':')[0])) -Minute ([int]($startTime.Split(':')[1])) -Second 0
+    $eventEnd = Get-Date -Hour ([int]($endTime.Split(':')[0])) -Minute ([int]($endTime.Split(':')[1])) -Second 0
+    
+    return ($now -ge $eventStart -and $now -le $eventEnd)
+}
+
+function Get-EventColor {
+    param($item)
+    
+    $arr = $item.Arrangement
+    $riggInfo = $item.RiggInfo
+    $getInInfo = $item.GetInInfo
+    $getOutInfo = $item.GetOutInfo
+    
+    $now = Get-Date
+    
+    # 1. Arrangement pågår (høyeste prioritet)
+    if (Is-EventActive -startTime $arr.startTime -endTime $arr.endTime) {
+        return "Cyan"
+    }
+    
+    # 2. Rigg pågår
+    if ($riggInfo -and (Is-EventActive -startTime $riggInfo.StartTime -endTime $riggInfo.EndTime)) {
+        return "White"
+    }
+    
+    # 3. Get-in pågår
+    if ($getInInfo -and (Is-EventActive -startTime $getInInfo.StartTime -endTime $getInInfo.EndTime)) {
+        return "Yellow"
+    }
+    
+    # 4. Get-out pågår
+    if ($getOutInfo -and (Is-EventActive -startTime $getOutInfo.StartTime -endTime $getOutInfo.EndTime)) {
+        return "Gray"
+    }
+    
+    # 5. Mellom Rigg og Arrangement (hvile)
+    if ($riggInfo) {
+        $riggEnd = Get-Date -Hour ([int]($riggInfo.EndTime.Split(':')[0])) -Minute ([int]($riggInfo.EndTime.Split(':')[1])) -Second 0
+        $arrStart = Get-Date -Hour ([int]($arr.startTime.Split(':')[0])) -Minute ([int]($arr.startTime.Split(':')[1])) -Second 0
+        
+        if ($now -ge $riggEnd -and $now -lt $arrStart) {
+            return "Gray"
+        }
+    }
+    
+    # 6. Før eller etter alt
+    return "DarkGray"
+}
+
+function Truncate([string]$text, [int]$length) {
+    if ($null -eq $text) { return "" }
+    if ($text.Length -le $length) { return $text }
+    return $text.Substring(0, $length - 2) + ".."
+}
+
+if ($arrangementerSortert.Count -gt 0) {
+    Write-Host " Rigg        Rom   Teknikere   Arrangør           Arr.tid" -ForegroundColor Cyan
+    Write-Host " ----------- ----- ----------- ------------------ -----------" -ForegroundColor DarkGray
+    
+    foreach ($item in $arrangementerSortert) {
+        $arr = $item.Arrangement
+        $riggInfo = $item.RiggInfo
+        
+        if ($riggInfo) {
+            $tid = "$($riggInfo.StartTime)-$($riggInfo.EndTime)"
+        } else {
+            $tid = "$($arr.startTime)-$($arr.endTime)"
+        }
+        
+        $rom = Short-Room $arr.roomName
+        
+        if ($riggInfo -and $riggInfo.Count -gt 1) {
+            $rom = $rom + "⚙" * $riggInfo.Count
+        }
+        
+        $tek = Get-TechnicianNames -eventName $arr.eventName -roomId $arr.roomId
+        if ($tek -eq "-") {
+            $tek = "     -       "
+        } elseif ($tek -like "*Trengs*" -or $tek -eq "TBD") {
+            $tek = "   Trengs    "
+        } else {
+            if ($tek.Length -gt 13) {
+                $tek = $tek.Substring(0, 13)
+            } else {
+                $tek = $tek.PadRight(13)
+            }
+        }
+        
+        $arrangor = "(ingen)"
+        if ($arr.eventId -and $eventCache.ContainsKey($arr.eventId)) {
+            $eventDetail = $eventCache[$arr.eventId]
+            if ($eventDetail -and $eventDetail.accountName) {
+                $arrangor = $eventDetail.accountName
+                if ($arrangor.Length -gt 22) {
+                    $arrangor = $arrangor.Substring(0, 20) + ".."
+                }
+            }
+        }
+        
+        $arrTider = "$($arr.startTime)-$($arr.endTime)"
+        
+        $farge = Get-EventColor -item $item
+        
+        $tid      = Truncate $tid 11
+        $rom      = Truncate $rom 6
+        $tek      = Truncate $tek 10
+        $arrangor = Truncate $arrangor 18
+        $arrTider = Truncate $arrTider 11
+
+        $arrangorPadded = $arrangor.PadRight(18)
+        $arrangorMedLenke = "`e]8;;https://meetings.eu-venueops.com/events/$($arr.eventId)/detailing/functions`e\$arrangorPadded`e]8;;`e\"
+        $linje = " {0,-11} {1,-6} {2,-10} {3} {4,-11}" -f $tid, $rom, $tek, $arrangorMedLenke, $arrTider
+        
+        if ((Is-EventActive -startTime $arr.startTime -endTime $arr.endTime)) {
+            Write-Host "$linje ◄" -ForegroundColor $farge
+        } else {
+            Write-Host $linje -ForegroundColor $farge
+        }
+    }
+} else {
+    Write-Host " Ingen arrangementer i dag" -ForegroundColor DarkGray
+}
+
+Write-Host ""
+Write-Host " VERTER" -ForegroundColor Cyan
+if ($verter) {
+    foreach ($v in $verter) {
+        $fornavn = $null
+        
+        if (-not [string]::IsNullOrWhiteSpace($v.name)) {
+            $cleanName = $v.name.Trim()
+            $navneDeler = $cleanName -split '\s+'
+            if ($navneDeler.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($navneDeler[0])) {
+                $fornavn = "$($navneDeler[0]) $($navneDeler[1]) $($navneDeler[2]) $($navneDeler[3])"
+            }
+        }
+        
+        if ([string]::IsNullOrWhiteSpace($fornavn)) {
+            $fornavn = "(ukjent)"
+        }
+        
+        $tid = "$($v.startTime)-$($v.endTime)"
+        $isVertActive = Is-EventActive -startTime $v.startTime -endTime $v.endTime
+        $linje = " {0,-11} {1}" -f $tid, $fornavn
+        
+        if ($fornavn -eq "Pål" -or $fornavn -eq "Mads" -or $fornavn -eq "Johan") {
+            if ($isVertActive) {
+                Write-Host "$linje ◄" -ForegroundColor Cyan
+            } else {
+                Write-Host $linje -ForegroundColor DarkGray
+            }
+        } else {
+            if ($isVertActive) {
+                Write-Host "$linje ◄" -ForegroundColor Cyan
+            } else {
+                Write-Host $linje -ForegroundColor DarkGray
+            }
+        }
+    }
+} else {
+    Write-Host " -ingen-" -ForegroundColor Red
+}
